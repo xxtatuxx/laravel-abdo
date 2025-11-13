@@ -13,6 +13,8 @@ const slides = ref([
 
 const currentSlide = ref(0);
 let interval: number;
+let startX = 0;
+let endX = 0;
 
 function nextSlide() {
   currentSlide.value = (currentSlide.value + 1) % slides.value.length;
@@ -24,12 +26,26 @@ function goToSlide(index: number) {
   currentSlide.value = index;
 }
 
+// التبديل التلقائي
 onMounted(() => {
   interval = setInterval(nextSlide, 4000);
 });
 onUnmounted(() => {
   clearInterval(interval);
 });
+
+// ---- السحب بالأصبع (Touch Swipe) ----
+function handleTouchStart(e: TouchEvent) {
+  startX = e.touches[0].clientX;
+}
+function handleTouchEnd(e: TouchEvent) {
+  endX = e.changedTouches[0].clientX;
+  const diff = startX - endX;
+  if (Math.abs(diff) > 50) {
+    if (diff > 0) nextSlide(); // سحب لليسار → السلايد التالي
+    else prevSlide(); // سحب لليمين → السلايد السابق
+  }
+}
 
 // ----- حلقات Carousel -----
 const page = usePage<{
@@ -58,7 +74,7 @@ watch(search, (value) => {
   });
 });
 
-// تحميل المزيد عند تمرير الشريط
+// تحميل المزيد عند التمرير
 const loadMoreEpisodes = () => {
   if (!nextPageUrl.value || loadingMore.value) return;
   loadingMore.value = true;
@@ -104,8 +120,13 @@ const scrollRight = () => {
   <Head title="home" />
   <AppLayout>
     <!-- السلايدر -->
-    <div class="relative overflow-hidden" style="width: 100vw; left: 50%; transform: translateX(-50%);">
-      <!-- الصور المتحركة -->
+    <div
+      class="relative overflow-hidden"
+      style="width: 100vw; left: 50%; transform: translateX(-50%);"
+      @touchstart="handleTouchStart"
+      @touchend="handleTouchEnd"
+    >
+      <!-- الصور -->
       <div
         class="flex transition-transform duration-700 ease-in-out"
         :style="{ transform: `translateX(-${currentSlide * 100}%)` }"
@@ -140,7 +161,7 @@ const scrollRight = () => {
         class="absolute p-3 text-white -translate-y-1/2 rounded-full shadow-lg top-1/2 right-4 bg-black/50 md:p-4 hover:bg-black/70"
       >›</button>
 
-      <!-- الدوائر الثابتة -->
+      <!-- الدوائر -->
       <div
         class="absolute bottom-0 left-0 flex items-end justify-center w-full h-16 pb-3 bg-gradient-to-t from-black/60 to-transparent"
       >
