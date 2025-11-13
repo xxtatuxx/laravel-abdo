@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import AppLayout from '@/layouts/AR-HomeLayout.vue';
-import { ref, onMounted, onUnmounted, watch } from 'vue';
+import { ref, onMounted, onUnmounted, watch, nextTick } from 'vue';
 import { usePage, router as inertia } from '@inertiajs/vue3';
 import { Episode } from '@/types';
 
-// ----- السلايدر -----
+// ----- السلايدر العلوي -----
 const slides = ref([
   { id: 1, image: '/animes/onepiece_cover.jpg', title: 'Slide 1', subtitle: 'Subtitle 1' },
   { id: 2, image: '/animes/naruto.jpg', title: 'Slide 2', subtitle: 'Subtitle 2' },
@@ -12,17 +12,29 @@ const slides = ref([
 ]);
 
 const currentSlide = ref(0);
+const sliderTrack = ref<HTMLDivElement>();
 let interval: number;
 let startX = 0;
 let endX = 0;
+let isDragging = false;
+let dragStartX = 0;
+let dragCurrentX = 0;
+let dragOffset = 0;
+const transitionEnabled = ref(true);
 
+// ----- دوال السلايدر العلوي -----
 function nextSlide() {
+  transitionEnabled.value = true;
   currentSlide.value = (currentSlide.value + 1) % slides.value.length;
 }
+
 function prevSlide() {
+  transitionEnabled.value = true;
   currentSlide.value = (currentSlide.value - 1 + slides.value.length) % slides.value.length;
 }
+
 function goToSlide(index: number) {
+  transitionEnabled.value = true;
   currentSlide.value = index;
 }
 
@@ -30,24 +42,102 @@ function goToSlide(index: number) {
 onMounted(() => {
   interval = setInterval(nextSlide, 4000);
 });
+
 onUnmounted(() => {
   clearInterval(interval);
 });
 
 // ---- السحب بالأصبع (Touch Swipe) ----
 function handleTouchStart(e: TouchEvent) {
+  transitionEnabled.value = false;
   startX = e.touches[0].clientX;
 }
+
+function handleTouchMove(e: TouchEvent) {
+  if (!sliderTrack.value) return;
+  
+  const currentX = e.touches[0].clientX;
+  const diff = startX - currentX;
+  const slideWidth = sliderTrack.value.offsetWidth;
+  
+  dragOffset = (-currentSlide.value * slideWidth) - (diff / slideWidth * 100);
+  sliderTrack.value.style.transform = `translateX(${dragOffset}%)`;
+}
+
 function handleTouchEnd(e: TouchEvent) {
+  transitionEnabled.value = true;
   endX = e.changedTouches[0].clientX;
   const diff = startX - endX;
+  
   if (Math.abs(diff) > 50) {
-    if (diff > 0) nextSlide(); // سحب لليسار → السلايد التالي
-    else prevSlide(); // سحب لليمين → السلايد السابق
+    if (diff > 0) nextSlide();
+    else prevSlide();
+  } else {
+    // إذا كانت المسافة غير كافية، نعود للسلايد الحالي
+    nextTick(() => {
+      if (sliderTrack.value) {
+        sliderTrack.value.style.transform = `translateX(-${currentSlide.value * 100}%)`;
+      }
+    });
   }
 }
 
-// ----- حلقات Carousel -----
+// ---- السحب بالماوس للسلايدر العلوي ----
+function handleMouseDown(e: MouseEvent) {
+  e.preventDefault();
+  isDragging = true;
+  transitionEnabled.value = false;
+  dragStartX = e.clientX;
+  
+  document.addEventListener('mousemove', handleMouseMove);
+  document.addEventListener('mouseup', handleMouseUp);
+  
+  // إيقاف التبديل التلقائي مؤقتاً
+  clearInterval(interval);
+}
+
+function handleMouseMove(e: MouseEvent) {
+  if (!isDragging || !sliderTrack.value) return;
+  
+  dragCurrentX = e.clientX;
+  const diff = dragStartX - dragCurrentX;
+  const slideWidth = sliderTrack.value.offsetWidth;
+  
+  // حساب الإزاحة بنسبة مئوية
+  dragOffset = (-currentSlide.value * 100) - (diff / slideWidth * 100);
+  sliderTrack.value.style.transform = `translateX(${dragOffset}%)`;
+}
+
+function handleMouseUp() {
+  if (!isDragging) return;
+  
+  const diff = dragStartX - dragCurrentX;
+  const slideWidth = sliderTrack.value?.offsetWidth || 0;
+  const threshold = slideWidth * 0.1; // 10% من عرض السلايد
+  
+  transitionEnabled.value = true;
+  
+  if (Math.abs(diff) > threshold) {
+    if (diff > 0) nextSlide();
+    else prevSlide();
+  } else {
+    // إذا كانت المسافة غير كافية، نعود للسلايد الحالي
+    nextTick(() => {
+      if (sliderTrack.value) {
+        sliderTrack.value.style.transform = `translateX(-${currentSlide.value * 100}%)`;
+      }
+    });
+  }
+  
+  isDragging = false;
+  document.removeEventListener('mousemove', handleMouseMove);
+  document.removeEventListener('mouseup', handleMouseUp);
+  
+  // إعادة تشغيل التبديل التلقائي
+  interval = setInterval(nextSlide, 4000);
+}
+
+// ----- حلقات Carousel السفلي -----
 const page = usePage<{
   episodes: { data: Episode[]; next_page_url?: string; current_page?: number };
   filters?: { search?: string };
@@ -59,6 +149,49 @@ const currentPage = ref(page.props.episodes.current_page || 1);
 const loadingMore = ref(false);
 const search = ref(page.props.filters?.search || '');
 const carouselRef = ref<HTMLDivElement | null>(null);
+
+// متغيرات السحب للكاروسيل السفلي
+let isCarouselDragging = false;
+let carouselStartX = 0;
+let carouselScrollLeft = 0;
+
+// ---- السحب بالماوس للكاروسيل السفلي ----
+function handleCarouselMouseDown(e: MouseEvent) {
+  if (!carouselRef.value) return;
+  
+  e.preventDefault();
+  isCarouselDragging = true;
+  carouselStartX = e.pageX;
+  carouselScrollLeft = carouselRef.value.scrollLeft;
+  
+  carouselRef.value.style.cursor = 'grabbing';
+  carouselRef.value.style.scrollBehavior = 'auto';
+  carouselRef.value.style.userSelect = 'none';
+  
+  document.addEventListener('mousemove', handleCarouselMouseMove);
+  document.addEventListener('mouseup', handleCarouselMouseUp);
+}
+
+function handleCarouselMouseMove(e: MouseEvent) {
+  if (!isCarouselDragging || !carouselRef.value) return;
+  
+  e.preventDefault();
+  const x = e.pageX;
+  const walk = (x - carouselStartX) * 1.5; // سرعة السحب
+  carouselRef.value.scrollLeft = carouselScrollLeft - walk;
+}
+
+function handleCarouselMouseUp() {
+  if (!carouselRef.value) return;
+  
+  isCarouselDragging = false;
+  carouselRef.value.style.cursor = 'grab';
+  carouselRef.value.style.scrollBehavior = 'smooth';
+  carouselRef.value.style.userSelect = 'auto';
+  
+  document.removeEventListener('mousemove', handleCarouselMouseMove);
+  document.removeEventListener('mouseup', handleCarouselMouseUp);
+}
 
 // البحث
 watch(search, (value) => {
@@ -111,6 +244,7 @@ const goToEpisode = (id: number) => {
 const scrollLeft = () => {
   carouselRef.value?.scrollBy({ left: -300, behavior: 'smooth' });
 };
+
 const scrollRight = () => {
   carouselRef.value?.scrollBy({ left: 300, behavior: 'smooth' });
 };
@@ -119,34 +253,35 @@ const scrollRight = () => {
 <template>
   <Head title="home" />
   <AppLayout>
-    <!-- السلايدر -->
+    <!-- السلايدر العلوي مع خاصية السحب بالماوس -->
     <div
-      class="relative overflow-hidden"
-      style="width: 100vw; left: 50%; transform: translateX(-50%);"
+      class="slider-main-container"
       @touchstart="handleTouchStart"
+      @touchmove="handleTouchMove"
       @touchend="handleTouchEnd"
+      @mousedown="handleMouseDown"
     >
       <!-- الصور -->
       <div
-        class="flex transition-transform duration-700 ease-in-out"
+        ref="sliderTrack"
+        class="slider-track"
+        :class="{ 'transition-enabled': transitionEnabled }"
         :style="{ transform: `translateX(-${currentSlide * 100}%)` }"
       >
         <div
           v-for="slide in slides"
           :key="slide.id"
-          class="flex-shrink-0 w-screen h-80 md:h-[350px] relative"
+          class="slide-item"
         >
           <img
             :src="slide.image"
             :alt="slide.title"
-            class="object-cover w-full h-full max-w-full max-h-full"
+            class="slide-image"
           />
           <!-- النص -->
-          <div
-            class="absolute p-4 text-white rounded-lg bottom-8 left-8 md:bottom-16 md:left-16 bg-black/40 backdrop-blur-md"
-          >
-            <h2 class="text-xl font-bold md:text-3xl">{{ slide.title }}</h2>
-            <p class="text-sm md:text-lg">{{ slide.subtitle }}</p>
+          <div class="slide-content">
+            <h2 class="slide-title">{{ slide.title }}</h2>
+            <p class="slide-subtitle">{{ slide.subtitle }}</p>
           </div>
         </div>
       </div>
@@ -154,96 +289,97 @@ const scrollRight = () => {
       <!-- أزرار تنقل -->
       <button
         @click="prevSlide"
-        class="absolute p-3 text-white -translate-y-1/2 rounded-full shadow-lg top-1/2 left-4 bg-black/50 md:p-4 hover:bg-black/70"
+        @mousedown.prevent
+        class="slider-nav-btn slider-prev"
       >‹</button>
       <button
         @click="nextSlide"
-        class="absolute p-3 text-white -translate-y-1/2 rounded-full shadow-lg top-1/2 right-4 bg-black/50 md:p-4 hover:bg-black/70"
+        @mousedown.prevent
+        class="slider-nav-btn slider-next"
       >›</button>
 
       <!-- الدوائر -->
-      <div
-        class="absolute bottom-0 left-0 flex items-end justify-center w-full h-16 pb-3 bg-gradient-to-t from-black/60 to-transparent"
-      >
-        <div class="flex gap-3">
+      <div class="slider-indicators">
+        <div class="indicators-container">
           <button
             v-for="(s, i) in slides"
             :key="i"
             @click="goToSlide(i)"
-            class="w-3 h-3 transition-all duration-300 rounded-full"
-            :class="i === currentSlide
-              ? 'bg-white scale-110 shadow-lg'
-              : 'bg-white/40 hover:bg-white/70'"
+            @mousedown.prevent
+            class="indicator-btn"
+            :class="{ active: i === currentSlide }"
           ></button>
         </div>
       </div>
     </div>
 
     <!-- عنوان الحلقات + أزرار الشريط -->
-    <div class="flex items-center justify-between px-4 mt-6">
-      <h2 class="text-2xl font-bold font-[Cairo] mb-4">آخر الحلقات المضافة</h2>
-      <div class="flex gap-2">
+    <div class="episodes-header">
+      <h2 class="episodes-title">آخر الحلقات المضافة</h2>
+      <div class="carousel-controls">
         <button
           @click="scrollLeft"
-          class="px-3 py-1 text-white bg-purple-600 rounded hover:bg-purple-700"
+          @mousedown.prevent
+          class="carousel-nav-btn"
         >‹</button>
         <button
           @click="scrollRight"
-          class="px-3 py-1 text-white bg-purple-600 rounded hover:bg-purple-700"
+          @mousedown.prevent
+          class="carousel-nav-btn"
         >›</button>
       </div>
     </div>
 
-    <!-- Carousel الحلقات -->
+    <!-- Carousel الحلقات مع خاصية السحب بالماوس -->
     <div
       ref="carouselRef"
       @scroll="onCarouselScroll"
-      class="flex gap-4 px-4 pb-4 overflow-x-auto scrollbar-hide"
-      style="scroll-behavior: smooth;"
+      @mousedown="handleCarouselMouseDown"
+      class="episodes-carousel"
     >
       <div
         v-for="episode in episodes"
         :key="episode.id"
         @click="goToEpisode(episode.id)"
-        class="flex-shrink-0 w-48 transition-transform bg-white rounded-lg shadow cursor-pointer hover:scale-105"
+        class="episode-card"
       >
-        <div class="relative w-full h-40">
+        <div class="episode-thumbnail">
           <img
             v-if="episode.thumbnail"
             :src="`/storage/${episode.thumbnail}`"
             alt="thumbnail"
-            class="object-cover w-full h-full rounded-t-lg"
+            class="thumbnail-image"
           />
           <div
             v-else
-            class="flex items-center justify-center w-full h-full text-gray-500 bg-gray-200 rounded-t-lg"
+            class="thumbnail-placeholder"
           >
             No Image
           </div>
           <div
             v-if="episode.is_published"
-            class="absolute top-2 left-2 bg-green-600 text-white text-[10px] font-bold rounded-full px-2 py-0.5 shadow-md"
+            class="episode-badge live-badge"
           >
             يعرض الآن
           </div>
           <div
             v-if="episode.video_format"
-            class="absolute top-2 right-2 bg-blue-600 text-white text-[10px] font-bold rounded-full px-2 py-0.5 shadow-md"
+            class="episode-badge format-badge"
           >
             {{ episode.video_format }}
           </div>
         </div>
-        <div class="flex flex-col gap-1 p-2">
-          <span class="text-sm font-semibold truncate">{{ episode.title }}</span>
-          <span class="text-xs text-gray-500 truncate">{{ episode.episode_number }} الحلقة</span>
+        <div class="episode-info">
+          <span class="episode-title">{{ episode.title }}</span>
+          <span class="episode-number">الحلقة {{ episode.episode_number }}</span>
         </div>
       </div>
 
-      <div v-if="loadingMore" class="flex gap-4">
+      <div v-if="loadingMore" class="loading-skeletons">
         <div
           v-for="n in 3"
           :key="n"
-          class="flex-shrink-0 w-48 h-56 p-4 bg-gray-300 rounded-lg shadow animate-pulse"
+          class="episode-skeleton"
         ></div>
       </div>
     </div>
@@ -251,6 +387,7 @@ const scrollRight = () => {
 </template>
 
 <style scoped>
+/* الأساسيات */
 .scrollbar-hide::-webkit-scrollbar {
   display: none;
 }
@@ -258,13 +395,347 @@ const scrollRight = () => {
   -ms-overflow-style: none;
   scrollbar-width: none;
 }
-div[style*='translateX'] {
-  touch-action: pan-y;
-}
-html,
-body {
+
+html, body {
   margin: 0;
   padding: 0;
   overflow-x: hidden;
+}
+
+/* السلايدر العلوي */
+.slider-main-container {
+  position: relative;
+  width: 100vw;
+  left: 50%;
+  transform: translateX(-50%);
+  overflow: hidden;
+  cursor: grab;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.slider-main-container:active {
+  cursor: grabbing;
+}
+
+.slider-track {
+  display: flex;
+  height: 350px;
+  transition: transform 0.5s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+}
+
+.slider-track.transition-enabled {
+  transition: transform 0.5s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+}
+
+.slide-item {
+  flex: 0 0 100%;
+  height: 100%;
+  position: relative;
+}
+
+.slide-image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  pointer-events: none;
+  -webkit-user-drag: none;
+}
+
+.slide-content {
+  position: absolute;
+  padding: 1rem;
+  color: white;
+  border-radius: 0.5rem;
+  bottom: 2rem;
+  right: 2rem;
+  background: rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(12px);
+}
+
+.slide-title {
+  font-size: 1.5rem;
+  font-weight: bold;
+  margin-bottom: 0.5rem;
+}
+
+.slide-subtitle {
+  font-size: 1rem;
+  opacity: 0.9;
+}
+
+/* أزرار التنقل */
+.slider-nav-btn {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  padding: 0.75rem;
+  color: white;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.5);
+  border: none;
+  cursor: pointer;
+  transition: background-color 0.2s;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+}
+
+.slider-nav-btn:hover {
+  background: rgba(0, 0, 0, 0.7);
+}
+
+.slider-nav-btn:active {
+  background: rgba(0, 0, 0, 0.8);
+}
+
+.slider-prev {
+  left: 1rem;
+}
+
+.slider-next {
+  right: 1rem;
+}
+
+/* الدوائر */
+.slider-indicators {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 4rem;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding-bottom: 0.75rem;
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.6), transparent);
+}
+
+.indicators-container {
+  display: flex;
+  gap: 0.75rem;
+}
+
+.indicator-btn {
+  width: 0.75rem;
+  height: 0.75rem;
+  border-radius: 50%;
+  border: none;
+  cursor: pointer;
+  transition: all 0.3s;
+  background: rgba(255, 255, 255, 0.4);
+  -webkit-tap-highlight-color: transparent;
+}
+
+.indicator-btn:hover {
+  background: rgba(255, 255, 255, 0.7);
+}
+
+.indicator-btn.active {
+  background: white;
+  transform: scale(1.1);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+/* عنوان الحلقات */
+.episodes-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 1rem;
+  margin-top: 1.5rem;
+  margin-bottom: 1rem;
+}
+
+.episodes-title {
+  font-size: 1.5rem;
+  font-weight: bold;
+  font-family: 'Cairo', sans-serif;
+}
+
+.carousel-controls {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.carousel-nav-btn {
+  padding: 0.5rem 0.75rem;
+  color: white;
+  background: rgb(147, 51, 234);
+  border: none;
+  border-radius: 0.375rem;
+  cursor: pointer;
+  transition: background-color 0.2s;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.carousel-nav-btn:hover {
+  background: rgb(126, 34, 206);
+}
+
+.carousel-nav-btn:active {
+  background: rgb(107, 33, 168);
+}
+
+/* كاروسيل الحلقات */
+.episodes-carousel {
+  display: flex;
+  gap: 1rem;
+  padding: 0 1rem 1rem;
+  overflow-x: auto;
+  scroll-behavior: smooth;
+  cursor: grab;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-overflow-scrolling: touch;
+}
+
+.episodes-carousel:active {
+  cursor: grabbing;
+}
+
+.episode-card {
+  flex: 0 0 auto;
+  width: 12rem;
+  background: white;
+  border-radius: 0.5rem;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+  cursor: pointer;
+  transition: transform 0.2s;
+  overflow: hidden;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.episode-card:hover {
+  transform: scale(1.05);
+}
+
+.episode-thumbnail {
+  position: relative;
+  width: 100%;
+  height: 10rem;
+}
+
+.thumbnail-image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 0.5rem 0.5rem 0 0;
+}
+
+.thumbnail-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  color: #6b7280;
+  background: #e5e7eb;
+  border-radius: 0.5rem 0.5rem 0 0;
+}
+
+.episode-badge {
+  position: absolute;
+  font-size: 0.625rem;
+  font-weight: bold;
+  border-radius: 9999px;
+  padding: 0.25rem 0.5rem;
+  color: white;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+}
+
+.live-badge {
+  top: 0.5rem;
+  left: 0.5rem;
+  background: rgb(22, 163, 74);
+}
+
+.format-badge {
+  top: 0.5rem;
+  right: 0.5rem;
+  background: rgb(37, 99, 235);
+}
+
+.episode-info {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding: 0.5rem;
+}
+
+.episode-title {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: #1f2937;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.episode-number {
+  font-size: 0.75rem;
+  color: #6b7280;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* التحميل */
+.loading-skeletons {
+  display: flex;
+  gap: 1rem;
+}
+
+.episode-skeleton {
+  flex: 0 0 auto;
+  width: 12rem;
+  height: 14rem;
+  padding: 1rem;
+  background: #d1d5db;
+  border-radius: 0.5rem;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+  animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+/* تحسينات للجوال */
+@media (max-width: 768px) {
+  .slider-track {
+    height: 280px;
+  }
+  
+  .slide-content {
+    bottom: 1rem;
+    right: 1rem;
+    padding: 0.75rem;
+  }
+  
+  .slide-title {
+    font-size: 1.25rem;
+  }
+  
+  .slide-subtitle {
+    font-size: 0.875rem;
+  }
+  
+  .slider-nav-btn {
+    padding: 0.5rem;
+  }
+  
+  .episode-card {
+    width: 10rem;
+  }
+  
+  .episode-thumbnail {
+    height: 8rem;
+  }
 }
 </style>
