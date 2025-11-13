@@ -12,35 +12,31 @@ use Inertia\Inertia;
 
 class HomeController extends Controller
 {
-    public function index(Request $request)
-    {
-                    
-    // جلب قيمة البحث من الطلب
+   public function index(Request $request)
+{
     $search = $request->input('search');
 
-    // إنشاء استعلام أساسي للحلقات مع العلاقة مع الأنمي
-    $query = Episode::with('series')->latest();
+    $query = Episode::with('series')
+        ->orderByDesc('id'); // ← ترتيب من الأحدث إلى الأقدم
 
-    // إذا وُجد بحث، أضف شرط البحث
     if (!empty($search)) {
         $query->where(function ($q) use ($search) {
-            $q->where('title', 'LIKE', "%{$search}%") // البحث في عنوان الحلقة
-              ->orWhere('episode_number', $search) // البحث برقم الحلقة بالضبط
+            $q->where('title', 'LIKE', "%{$search}%")
+              ->orWhere('episode_number', $search)
               ->orWhereHas('series', function ($seriesQuery) use ($search) {
-                  $seriesQuery->where('name', 'LIKE', "%{$search}%"); // البحث في اسم الأنمي المرتبط
+                  $seriesQuery->where('name', 'LIKE', "%{$search}%");
               });
         });
     }
 
-    // تنفيذ الاستعلام مع ترقيم الصفحات
     $episodes = $query->paginate(15);
 
-    // تمرير النتائج إلى واجهة Inertia
     return Inertia::render('home/ar-home', [
         'episodes' => $episodes,
         'filters' => [
             'search' => $search,
         ],
     ]);
-    }
+}
+
 }
